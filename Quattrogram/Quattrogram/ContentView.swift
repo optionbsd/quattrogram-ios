@@ -4,7 +4,7 @@ import MediaPlayer
 
 struct ContentView: View {
     @StateObject private var viewModel = SongListViewModel()
-    @StateObject private var audioManager = AudioPlayerManager() // Добавляем сюда AudioPlayerManager
+    @StateObject private var audioManager = AudioPlayerManager()
 
     var body: some View {
         NavigationView {
@@ -17,7 +17,7 @@ struct ContentView: View {
                 } else {
                     VStack(alignment: .leading, spacing: 16) {
                         ForEach(viewModel.songs) { song in
-                            NavigationLink(destination: PlayerView(song: song, audioManager: audioManager)) { // Передаем audioManager в PlayerView
+                            NavigationLink(destination: PlayerView(audioManager: audioManager, song: song, allSongs: viewModel.songs)) {
                                 SongCard(
                                     title: song.name,
                                     artist: song.artist,
@@ -36,7 +36,6 @@ struct ContentView: View {
         }
     }
 }
-
 
 struct SongCard: View {
     let title: String
@@ -75,7 +74,7 @@ class AudioPlayerManager: ObservableObject {
     @Published var isPlaying: Bool = false
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
-    @Published var isRepeatEnabled: Bool = false // Повтор трека
+    @Published var isRepeatEnabled: Bool = false
 
     private var audioPlayer: AVPlayer?
     private var timeObserver: Any?
@@ -83,12 +82,10 @@ class AudioPlayerManager: ObservableObject {
     private var currentIndex: Int = 0
 
     init() {
-        // Обрабатываем переходы в фон и активность
         NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
     }
 
-    // Метод для начала воспроизведения
     func play(song: Song, songs: [Song]) {
         self.songsList = songs
         if currentSong?.id == song.id {
@@ -111,15 +108,12 @@ class AudioPlayerManager: ObservableObject {
         audioPlayer?.play()
         isPlaying = true
 
-        // Обновляем Now Playing Info
         updateNowPlayingInfo(song: song)
 
-        // Разрешаем фоновое воспроизведение
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: .duckOthers)
         try? AVAudioSession.sharedInstance().setActive(true)
     }
 
-    // Метод для паузы и продолжения воспроизведения
     func togglePlayPause() {
         guard let player = audioPlayer else { return }
         if isPlaying {
@@ -128,29 +122,22 @@ class AudioPlayerManager: ObservableObject {
             player.play()
         }
         isPlaying.toggle()
-
-        // Обновляем Now Playing Info
         updateNowPlayingInfo(song: currentSong)
     }
 
-    // Метод для перемотки
     func seek(to time: Double) {
         guard let player = audioPlayer else { return }
         let targetTime = CMTime(seconds: time, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
         player.seek(to: targetTime)
         currentTime = time
-
-        // Обновляем Now Playing Info
         updateNowPlayingInfo(song: currentSong)
     }
 
-    // Метод для восстановления воспроизведения
     private func resume() {
         audioPlayer?.play()
         isPlaying = true
     }
 
-    // Сброс плеера
     private func resetPlayer() {
         audioPlayer?.pause()
         if let observer = timeObserver {
@@ -161,12 +148,9 @@ class AudioPlayerManager: ObservableObject {
         isPlaying = false
         currentTime = 0
         duration = 0
-
-        // Очищаем Now Playing Info
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
-    // Метод для обновления информации о треке
     private func updateNowPlayingInfo(song: Song?) {
         guard let song = song else { return }
 
@@ -174,87 +158,115 @@ class AudioPlayerManager: ObservableObject {
             MPMediaItemPropertyTitle: song.name,
             MPMediaItemPropertyArtist: song.artist,
             MPMediaItemPropertyPlaybackDuration: duration,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
-            MPMediaItemPropertyArtwork: MPMediaItemArtwork(boundsSize: CGSize(width: 100, height: 100)) { _ in
-                return UIImage(systemName: "music.note")! // Используйте свою обложку
-            }
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime
         ]
-        
+
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
     }
 
-    // Функция для обработки событий, когда приложение уходит в фон
     @objc func appDidEnterBackground() {
-        // Обрабатываем сохранение состояния плеера
         print("App entered background")
     }
 
-    // Функция для обработки событий, когда приложение возвращается в фон
     @objc func appWillEnterForeground() {
-        // Восстанавливаем состояние плеера
         print("App entered foreground")
     }
 
-    // Метод для добавления периодического таймера
     private func addPeriodicTimeObserver() {
         let interval = CMTime(seconds: 1, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
         timeObserver = audioPlayer?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            self?.currentTime = time.seconds
-            self?.updateNowPlayingInfo(song: self?.currentSong)
+            guard let self = self else { return }
+            self.currentTime = time.seconds
+            if let duration = self.audioPlayer?.currentItem?.duration.seconds, duration > 0 {
+                self.duration = duration
+            }
 
-            if self?.currentTime == self?.duration {
-                self?.nextSong()
+            // Если время песни достигает конца и повтор включен, начинаем песню сначала
+            if self.currentTime >= self.duration - 1 {
+                if self.isRepeatEnabled {
+                    // При включенном повторе продолжаем воспроизведение той же песни
+                    self.seek(to: 0)  // Перематываем на начало
+                    self.resume()     // Сразу начинаем воспроизведение
+                } else {
+                    self.nextSong()   // Переходим к следующей песне, если повтор не включен
+                }
             }
         }
     }
 
-    // Включение/выключение повтора
+
+
     func toggleRepeat() {
         isRepeatEnabled.toggle()
     }
 
-    // Переход к следующему треку
     func nextSong() {
+        guard !songsList.isEmpty else { return }
+
         if isRepeatEnabled {
+            // Если повтор включен, просто воспроизводим текущую песню снова
             play(song: currentSong ?? songsList[currentIndex], songs: songsList)
         } else {
+            // Переходим к следующей песне, если повтор не включен
             currentIndex = (currentIndex + 1) % songsList.count
             play(song: songsList[currentIndex], songs: songsList)
         }
     }
+    
+    func forceNextSong() {
+        guard !songsList.isEmpty else { return }
+        currentIndex = (currentIndex + 1) % songsList.count
+        play(song: songsList[currentIndex], songs: songsList)
+    }
+    
+    
 
-    // Переход к предыдущему треку
     func previousSong() {
+        guard !songsList.isEmpty else { return }
+        
+        // Если мы находимся на первой песне, идем к последней
         currentIndex = (currentIndex - 1 + songsList.count) % songsList.count
         play(song: songsList[currentIndex], songs: songsList)
     }
+
 }
 
 struct PlayerView: View {
-    let song: Song
     @ObservedObject var audioManager: AudioPlayerManager
+    @State var song: Song
+    let allSongs: [Song]
 
     var body: some View {
         VStack(spacing: 20) {
-            AsyncImage(url: song.coverURL) { image in
-                image.resizable()
-                    .scaledToFit()
-                    .cornerRadius(16)
-            } placeholder: {
-                ProgressView()
-                    .frame(width: 300, height: 300)
+            ZStack {
+                GeometryReader { geometry in
+                    AsyncImage(url: song.coverURL) { image in
+                        image.resizable()
+                            .scaledToFill()
+                            .aspectRatio(1, contentMode: .fill)
+                            .frame(width: geometry.size.width - 40, height: geometry.size.width - 40)
+                            .clipShape(RoundedRectangle(cornerRadius: 20))
+                            .clipped()
+                    } placeholder: {
+                        ProgressView()
+                            .frame(width: geometry.size.width - 40, height: geometry.size.width - 40)
+                            .clipShape(RoundedRectangle(cornerRadius: 20))
+                            .clipped()
+                    }
+                    .padding(20)
+                }
+
             }
 
             VStack(spacing: 0) {
                 Text(song.name)
                     .font(.title)
                     .bold()
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 10)
 
                 Text(song.artist)
                     .font(.title2)
                     .foregroundColor(.gray)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             HStack {
@@ -278,36 +290,39 @@ struct PlayerView: View {
                 Button(action: audioManager.previousSong) {
                     Image(systemName: "backward.fill")
                         .font(.title)
-                        .foregroundColor(.white)
                         .padding()
-                        .background(Circle().fill(Color.blue))
                 }
 
                 Button(action: audioManager.togglePlayPause) {
                     Image(systemName: audioManager.isPlaying ? "pause.fill" : "play.fill")
                         .font(.largeTitle)
-                        .foregroundColor(.white)
                         .padding()
-                        .background(Circle().fill(Color.blue))
                 }
 
-                Button(action: audioManager.nextSong) {
+                Button(action: audioManager.forceNextSong) {
                     Image(systemName: "forward.fill")
                         .font(.title)
-                        .foregroundColor(.white)
                         .padding()
-                        .background(Circle().fill(Color.blue))
                 }
             }
 
-            Toggle("Повтор", isOn: $audioManager.isRepeatEnabled)
-                .padding()
+            HStack {
+                Button(action: audioManager.toggleRepeat) {
+                    Image(systemName: audioManager.isRepeatEnabled ? "repeat.circle.fill" : "repeat.circle")
+                        .font(.title)
+                        .padding()
+                }
+                .foregroundColor(audioManager.isRepeatEnabled ? .blue : .gray)
+            }
 
             Spacer()
         }
         .padding()
         .onAppear {
-            audioManager.play(song: song, songs: [song])
+            audioManager.play(song: song, songs: allSongs)
+        }
+        .onChange(of: audioManager.currentSong) { newSong in
+            song = newSong ?? song
         }
     }
 
@@ -361,7 +376,7 @@ class SongListViewModel: ObservableObject {
     }
 }
 
-struct Song: Identifiable, Decodable {
+struct Song: Identifiable, Decodable, Equatable {
     let id: String
     let name: String
     let artist: String
@@ -373,7 +388,12 @@ struct Song: Identifiable, Decodable {
     var audioURL: URL? {
         URL(string: "https://api.qgram.ru/songs/\(id).wav")
     }
+    
+    static func == (lhs: Song, rhs: Song) -> Bool {
+        return lhs.id == rhs.id && lhs.name == rhs.name && lhs.artist == rhs.artist
+    }
 }
+
 
 struct SongListResponse: Decodable {
     let status: String
@@ -383,4 +403,3 @@ struct SongListResponse: Decodable {
 #Preview {
     ContentView()
 }
- 
