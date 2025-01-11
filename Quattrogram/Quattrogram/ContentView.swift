@@ -5,37 +5,48 @@ import MediaPlayer
 struct ContentView: View {
     @StateObject private var viewModel = SongListViewModel()
     @StateObject private var audioManager = AudioPlayerManager()
+    @State private var searchText: String = ""
 
     var body: some View {
         NavigationView {
             ScrollView {
-                if viewModel.isLoading {
-                    ProgressView("Загрузка песен...")
-                } else if viewModel.errorMessage != nil {
-                    Text(viewModel.errorMessage!)
-                        .foregroundColor(.red)
-                } else {
-                    VStack(alignment: .leading, spacing: 16) {
-                        ForEach(viewModel.songs) { song in
-                            NavigationLink(destination: PlayerView(audioManager: audioManager, song: song, allSongs: viewModel.songs)) {
-                                SongCard(
-                                    title: song.name,
-                                    artist: song.artist,
-                                    coverImageURL: song.coverURL
-                                )
+                VStack {
+                    TextField("Поиск...", text: $searchText)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .padding()
+
+                    if viewModel.isLoading {
+                        ProgressView("Загрузка песен...")
+                    } else if viewModel.errorMessage != nil {
+                        Text(viewModel.errorMessage!)
+                            .foregroundColor(.red)
+                    } else {
+                        VStack(alignment: .leading, spacing: 16) {
+                            ForEach(viewModel.songs) { song in
+                                NavigationLink(destination: PlayerView(audioManager: audioManager, song: song, allSongs: viewModel.songs)) {
+                                    SongCard(
+                                        title: song.name,
+                                        artist: song.artist,
+                                        coverImageURL: song.coverURL
+                                    )
+                                }
                             }
                         }
+                        .padding()
                     }
-                    .padding()
                 }
             }
             .navigationTitle("Главная")
-        }
-        .onAppear {
-            viewModel.fetchSongs()
+            .onAppear {
+                viewModel.fetchSongs()
+            }
+            .onChange(of: searchText) { newValue in
+                viewModel.searchSongs(query: newValue)
+            }
         }
     }
 }
+
 
 struct SongCard: View {
     let title: String
@@ -239,21 +250,13 @@ struct PlayerView: View {
     var body: some View {
         VStack(spacing: 20) {
             ZStack {
-                GeometryReader { geometry in
-                    AsyncImage(url: song.coverURL) { image in
+                AsyncImage(url: song.coverURL) { image in
                         image.resizable()
-                            .scaledToFill()
-                            .aspectRatio(1, contentMode: .fill)
-                            .frame(width: geometry.size.width - 40, height: geometry.size.width - 40)
-                            .clipShape(RoundedRectangle(cornerRadius: 20))
-                            .clipped()
+                        .scaledToFill()
+                        .clipped()
+                        .cornerRadius(16)
                     } placeholder: {
                         ProgressView()
-                            .frame(width: geometry.size.width - 40, height: geometry.size.width - 40)
-                            .clipShape(RoundedRectangle(cornerRadius: 20))
-                            .clipped()
-                    }
-                    .padding(20)
                 }
 
             }
@@ -338,8 +341,22 @@ class SongListViewModel: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
 
+    private let apiURL = "https://api.qgram.ru/"
+
     func fetchSongs() {
-        guard let url = URL(string: "https://api.qgram.ru/") else { return }
+        sendRequest(with: ["action": "list"])
+    }
+
+    func searchSongs(query: String) {
+        if query.isEmpty {
+            fetchSongs() // Сброс поиска
+        } else {
+            sendRequest(with: ["action": "list", "search": query])
+        }
+    }
+
+    private func sendRequest(with body: [String: Any]) {
+        guard let url = URL(string: apiURL) else { return }
 
         isLoading = true
         errorMessage = nil
@@ -347,8 +364,6 @@ class SongListViewModel: ObservableObject {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let body: [String: Any] = ["action": "list"]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         URLSession.shared.dataTask(with: request) { data, response, error in
