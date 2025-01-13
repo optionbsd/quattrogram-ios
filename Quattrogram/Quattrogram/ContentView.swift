@@ -47,7 +47,6 @@ struct ContentView: View {
     }
 }
 
-
 struct SongCard: View {
     let title: String
     let artist: String
@@ -86,6 +85,7 @@ class AudioPlayerManager: ObservableObject {
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
     @Published var isRepeatEnabled: Bool = false
+    @Published var songLyrics: String?
 
     private var audioPlayer: AVPlayer?
     private var timeObserver: Any?
@@ -96,6 +96,36 @@ class AudioPlayerManager: ObservableObject {
         NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground), name: UIApplication.willEnterForegroundNotification, object: nil)
     }
+    
+    func fetchSongLyrics(songId: String) {
+            // Реализуем запрос к API для получения текста песни.
+            let url = URL(string: "https://api.qgram.ru/")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            
+            let body = [
+                "action": "gettext",
+                "song_id": songId
+            ]
+            
+            let jsonData = try? JSONSerialization.data(withJSONObject: body)
+            request.httpBody = jsonData
+            
+            URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+                guard let self = self, let data = data, error == nil else {
+                    print("Error fetching lyrics: \(error?.localizedDescription ?? "Unknown error")")
+                    return
+                }
+                
+                // Обрабатываем ответ и обновляем текст песни
+                if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let text = json["text"] as? String {
+                    DispatchQueue.main.async {
+                        self.songLyrics = text
+                    }
+                }
+            }.resume()
+        }
 
     func play(song: Song, songs: [Song]) {
         self.songsList = songs
@@ -195,7 +225,6 @@ class AudioPlayerManager: ObservableObject {
             // Если время песни достигает конца и повтор включен, начинаем песню сначала
             if self.currentTime >= self.duration - 1 {
                 if self.isRepeatEnabled {
-                    // При включенном повторе продолжаем воспроизведение той же песни
                     self.seek(to: 0)  // Перематываем на начало
                     self.resume()     // Сразу начинаем воспроизведение
                 } else {
@@ -205,8 +234,6 @@ class AudioPlayerManager: ObservableObject {
         }
     }
 
-
-
     func toggleRepeat() {
         isRepeatEnabled.toggle()
     }
@@ -215,10 +242,8 @@ class AudioPlayerManager: ObservableObject {
         guard !songsList.isEmpty else { return }
 
         if isRepeatEnabled {
-            // Если повтор включен, просто воспроизводим текущую песню снова
             play(song: currentSong ?? songsList[currentIndex], songs: songsList)
         } else {
-            // Переходим к следующей песне, если повтор не включен
             currentIndex = (currentIndex + 1) % songsList.count
             play(song: songsList[currentIndex], songs: songsList)
         }
@@ -230,36 +255,40 @@ class AudioPlayerManager: ObservableObject {
         play(song: songsList[currentIndex], songs: songsList)
     }
     
-    
-
     func previousSong() {
         guard !songsList.isEmpty else { return }
         
-        // Если мы находимся на первой песне, идем к последней
         currentIndex = (currentIndex - 1 + songsList.count) % songsList.count
         play(song: songsList[currentIndex], songs: songsList)
     }
-
 }
 
 struct PlayerView: View {
     @ObservedObject var audioManager: AudioPlayerManager
     @State var song: Song
     let allSongs: [Song]
+    
+    @State private var isModalPresented = false
 
     var body: some View {
         VStack(spacing: 20) {
             ZStack {
                 AsyncImage(url: song.coverURL) { image in
-                        image.resizable()
-                        .scaledToFill()
-                        .clipped()
-                        .cornerRadius(16)
-                    } placeholder: {
-                        ProgressView()
+                    image
+                        .resizable()
+                        .scaledToFill() // Масштабируем изображение так, чтобы оно заполнило область
+                        .frame(width: .infinity, height: .infinity) // Устанавливаем размер области
+                        .clipped() // Обрезаем изображение за пределами области
+                        .cornerRadius(16) // Скругляем углы
+                        .padding(24)
+                } placeholder: {
+                    ProgressView()
                 }
-
+                .frame(width: .infinity, height: .infinity) // Устанавливаем размер контейнера
+                .padding(24)
+                .cornerRadius(16) // Скругляем углы контейнера
             }
+
 
             VStack(spacing: 0) {
                 Text(song.name)
@@ -290,6 +319,13 @@ struct PlayerView: View {
             }
 
             HStack {
+                Button(action: audioManager.toggleRepeat) {
+                    Image(systemName: audioManager.isRepeatEnabled ? "repeat.circle.fill" : "repeat.circle")
+                        .font(.title)
+                        .padding()
+                }
+                .foregroundColor(audioManager.isRepeatEnabled ? .blue : .gray)
+                
                 Button(action: audioManager.previousSong) {
                     Image(systemName: "backward.fill")
                         .font(.title)
@@ -307,15 +343,15 @@ struct PlayerView: View {
                         .font(.title)
                         .padding()
                 }
-            }
-
-            HStack {
-                Button(action: audioManager.toggleRepeat) {
-                    Image(systemName: audioManager.isRepeatEnabled ? "repeat.circle.fill" : "repeat.circle")
+                
+                // Кнопка для открытия модального окна
+                Button(action: {
+                    isModalPresented.toggle()
+                }) {
+                    Image(systemName: "textformat")
                         .font(.title)
                         .padding()
                 }
-                .foregroundColor(audioManager.isRepeatEnabled ? .blue : .gray)
             }
 
             Spacer()
@@ -327,12 +363,77 @@ struct PlayerView: View {
         .onChange(of: audioManager.currentSong) { newSong in
             song = newSong ?? song
         }
+        // Модальное окно
+        .sheet(isPresented: $isModalPresented) {
+            ModalView(audioManager: audioManager) // Передаем audioManager для актуальной песни
+        }
     }
 
     private func formatTime(_ time: Double) -> String {
         let minutes = Int(time) / 60
         let seconds = Int(time) % 60
         return String(format: "%02d:%02d", minutes, seconds)
+    }
+}
+
+struct ModalView: View {
+    @ObservedObject var audioManager: AudioPlayerManager
+
+    var body: some View {
+        HStack {
+            VStack {
+                if let currentSong = audioManager.currentSong {
+                    HStack {
+                        VStack {
+                            Text(currentSong.name)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .font(.title)
+                            Text(currentSong.artist)
+                                .foregroundColor(.gray)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        Spacer()
+                        HStack {
+                            Button(action: audioManager.togglePlayPause) {
+                                Image(systemName: audioManager.isPlaying ? "pause.fill" : "play.fill")
+                                    .font(.largeTitle)
+                            }
+                        }
+                    }
+                }
+                
+                // Отображаем текст песни в ScrollView
+                if let lyrics = audioManager.songLyrics {
+                    ScrollView {
+                        if lyrics != "$LYRICS_OUT" {
+                            Text(lyrics)
+                                .font(.title3)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text("Текст отсутсвует")
+                                .foregroundColor(.gray)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        
+                    }
+                } else {
+                    Text("Текст песни загружается...")
+                        .padding()
+                }
+            }
+        }
+        .padding()
+        .onAppear {
+            // Загружаем текст песни сразу при открытии модального окна
+            if let songId = audioManager.currentSong?.id {
+                audioManager.fetchSongLyrics(songId: songId)
+            }
+        }
+        .onChange(of: audioManager.currentSong) { newSong in
+            if let songId = newSong?.id {
+                audioManager.fetchSongLyrics(songId: songId)
+            }
+        }
     }
 }
 
@@ -403,12 +504,15 @@ struct Song: Identifiable, Decodable, Equatable {
     var audioURL: URL? {
         URL(string: "https://api.qgram.ru/songs/\(id).wav")
     }
-    
+
+    var lyricsURL: URL? {
+        URL(string: "https://api.qgram.ru/")
+    }
+
     static func == (lhs: Song, rhs: Song) -> Bool {
         return lhs.id == rhs.id && lhs.name == rhs.name && lhs.artist == rhs.artist
     }
 }
-
 
 struct SongListResponse: Decodable {
     let status: String
