@@ -1,10 +1,3 @@
-//
-//  QuattrogramTests.swift
-//  QuattrogramTests
-//
-//  Created by Гоша Митрофанов on 10/1/25.
-//
-
 import Testing
 @testable import Quattrogram
 

@@ -1,10 +1,3 @@
-//
-//  QuattrogramUITestsLaunchTests.swift
-//  QuattrogramUITests
-//
-//  Created by Гоша Митрофанов on 10/1/25.
-//
-
 import XCTest
 
 final class QuattrogramUITestsLaunchTests: XCTestCase {

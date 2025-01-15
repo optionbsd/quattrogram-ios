@@ -43,6 +43,19 @@ struct ContentView: View {
             .onChange(of: searchText) { newValue in
                 viewModel.searchSongs(query: newValue)
             }
+            if let currentSong = audioManager.currentSong {
+                HStack {
+                    VStack {
+                        Text(currentSong.name)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .font(.title)
+                        Text(currentSong.artist)
+                            .foregroundColor(.gray)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+            
         }
     }
 }

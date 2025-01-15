@@ -1,10 +1,3 @@
-//
-//  QuattrogramApp.swift
-//  Quattrogram
-//
-//  Created by Гоша Митрофанов on 10/1/25.
-//
-
 import SwiftUI
 
 @main
